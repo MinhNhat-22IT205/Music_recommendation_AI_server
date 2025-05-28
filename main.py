@@ -18,6 +18,7 @@ from flask_cors import CORS
 import subprocess
 import requests
 import base64
+import shutil  # Added for directory clearing
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -177,9 +178,18 @@ def search_spotify(query):
         print(f"Error searching Spotify: {e}")
         return []
 
-# Helper functions for preprocessing (unchanged)
+# Helper functions for preprocessing
 def extract_random_faces(video_path, max_faces=16, frame_size=(64, 64), sample_frames=20):
     faces = []
+    # Define directory to save cropped faces
+    cropped_faces_dir = "CroppedFaces"
+    # Clear the directory before saving new faces
+    shutil.rmtree(cropped_faces_dir, ignore_errors=True)
+    os.makedirs(cropped_faces_dir, exist_ok=True)
+    print(f"Cleared and recreated directory: {cropped_faces_dir}")
+    # Extract video filename for naming the saved faces
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -195,14 +205,23 @@ def extract_random_faces(video_path, max_faces=16, frame_size=(64, 64), sample_f
         ret, frame = cap.read()
         if not ret:
             continue
+        # Resize to len de Haar Cascade nhan dien tot hon
         small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         faces_detected = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
         if len(faces_detected) > 0:
+            # Choose biggest face
             (x, y, w, h) = max(faces_detected, key=lambda rect: rect[2] * rect[3])
+            # Resize back to original size
             x, y, w, h = x*2, y*2, w*2, h*2
+            # Crop the detected face 
             face = frame[y:y+h, x:x+w]
+            # Resize to 64x64 for model input - just stretch the image to the size
             face = cv2.resize(face, frame_size)
+            # Save the cropped face
+            face_filename = os.path.join(cropped_faces_dir, f"{video_name}_frame_{i}.png")
+            cv2.imwrite(face_filename, face)  # Already in BGR format, no conversion needed
+            print(f"Saved cropped face: {face_filename}")
             face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
             faces.append(face)
         if len(faces) >= max_faces:
@@ -268,7 +287,7 @@ def preprocess_video(video_path):
     
     video_np = pad_or_truncate_frames(faces, target_num_frames=NUM_FRAMES)
     video_np = video_np.astype(np.float32) / 255.0
-    video_np = (video_np - 0.5) / 0.5
+    video_np = (video_np - 0.5) / 0.5  # Normalize về [-1, 1]
     video_tensor = torch.tensor(video_np, dtype=torch.float32).permute(0, 3, 1, 2).unsqueeze(0).to(device)
     print(f"Video tensor shape: {video_tensor.shape}")
     return video_tensor
